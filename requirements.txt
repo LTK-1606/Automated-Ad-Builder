@@ -3,5 +3,5 @@ gdown
 pandas
 sentence-transformers
 openpyxl
-sklearn.metrics
+scikit-learn
 moviepy
