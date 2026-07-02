@@ -78,7 +78,7 @@ if ad_script:
 
         current_selection = st.radio(
             label=f"Choose clip for Scene {line_number}:",
-            options=[0, 1, 2],
+            options=[0, 1, 2, 3, 4],
             format_func=lambda x: choices_options[x]["label"],
             key=f"scene_{line_number}_{hash(script_line)}_radio"
         )
