@@ -1,0 +1,7 @@
+streamlit
+gdown
+pandas
+sentence-transformers
+openpyxl
+sklearn.metrics
+moviepy
