@@ -1,133 +1,132 @@
 import os
+import sys
 import pandas as pd
 import gdown
-import streamlit as st
+from flask import Flask, render_template, request, redirect, url_for, session
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from moviepy import VideoFileClip, concatenate_videoclips
+import webbrowser
+from threading import Timer
 
-st.set_page_config(page_title="Automated Ad Video Builder", layout="wide")
-CLIP_PATH = "clip_library.xlsx"
+def get_resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
+app = Flask(__name__, 
+            template_folder=get_resource_path("templates"), 
+            static_folder=get_resource_path("static"))
+
+if hasattr(sys, '_MEIPASS'):
+    CLIP_PATH = os.path.join(os.path.dirname(sys.executable), "Video Clip Selector.xlsx")
+else:
+    CLIP_PATH = os.path.join(os.path.abspath("."), "Video Clip Selector.xlsx")
+
+app = Flask(__name__)
+app.secret_key = "super_secret_session_key" 
+
 TEMP_DIR = "./temp_clips"
-FINAL_OUTPUT_PATH = "final_ad_output.mp4"
+FINAL_OUTPUT_PATH = "static/final_ad_output.mp4"
 
 os.makedirs(TEMP_DIR, exist_ok=True)
+os.makedirs("static", exist_ok=True)
 
-@st.cache_data
-def load_data():
-    df = pd.read_excel(CLIP_PATH, sheet_name=1)
-    df.columns = df.columns.str.strip()
-    df_new = df[['Clip Name', 'Actions', 'Clip Link']].copy()
-    df_new.rename(columns={'Clip Name': 'clip_id', 'Actions': 'keywords', 'Clip Link': 'gdrive_url'}, inplace=True)
-    return df_new
+print("Loading data and model...")
+df = pd.read_excel(CLIP_PATH, sheet_name=1)
+df.columns = df.columns.str.strip()
+df_clips = df[['Clip Name', 'Actions', 'Clip Link']].copy()
+df_clips.rename(columns={'Clip Name': 'clip_id', 'Actions': 'keywords', 'Clip Link': 'gdrive_url'}, inplace=True)
 
-@st.cache_resource
-def load_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+model = SentenceTransformer("all-MiniLM-L6-v2")
+clip_embeddings = model.encode(df_clips["keywords"].tolist(), show_progress_bar=False)
+print("Startup complete!")
 
-df_new = load_data()
-model = load_model()
-
-if 'clip_embeddings' not in st.session_state:
-    st.session_state.clip_embeddings = model.encode(df_new["keywords"].tolist(), show_progress_bar=False)
-
-# APP
-st.title("🎬 Automated Ad Video Builder")
-
-default_script = ""
-
-user_input = st.text_area(
-    label="Paste your script (Put each scene/line on a new row, Hit Ctrl+Enter to submit):",
-    value=default_script,
-    height=150
-)
-
-ad_script = [line.strip() for line in user_input.split("\n") if line.strip()]
-
-if 'selections' not in st.session_state:
-    st.session_state.selections = {}
-
-if ad_script:
-    for line_number, script_line in enumerate(ad_script, start=1):
-        st.write("---")
-        st.subheader(f"Scene {line_number}: *\"{script_line}\"*")
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        user_input = request.form.get("script", "")
+        ad_script = [line.strip() for line in user_input.split("\n") if line.strip()]
         
-        script_embedding = model.encode([script_line])
-        similarities = cosine_similarity(script_embedding, st.session_state.clip_embeddings)[0]
+        if not ad_script:
+            return render_template("index.html", error="Please enter a script.")
         
-        top_3_indices = similarities.argsort()[-5:][::-1]
-        cols = st.columns(5)        
-        choices_options = []
-        
-        for i, idx in enumerate(top_3_indices):
-            clip_id = df_new.iloc[idx]["clip_id"]
-            keywords = df_new.iloc[idx]["keywords"]
-            gdrive_url = df_new.iloc[idx]["gdrive_url"]
-            score = similarities[idx]
+        scenes_data = []
+        for line_number, script_line in enumerate(ad_script, start=1):
+            script_embedding = model.encode([script_line])
+            similarities = cosine_similarity(script_embedding, clip_embeddings)[0]
+            top_5_indices = similarities.argsort()[-5:][::-1]
             
-            choices_options.append({
-                "clip_id": clip_id,
-                "gdrive_url": gdrive_url,
-                "label": f"Option {i+1}: {clip_id} (Match: {score:.1%})"
+            choices = []
+            for i, idx in enumerate(top_5_indices):
+                choices.append({
+                    "clip_id": str(df_clips.iloc[idx]["clip_id"]),
+                    "keywords": str(df_clips.iloc[idx]["keywords"]),
+                    "gdrive_url": str(df_clips.iloc[idx]["gdrive_url"]),
+                    "score": f"{similarities[idx]:.1%}"
+                })
+                
+            scenes_data.append({
+                "line_number": line_number,
+                "script_line": script_line,
+                "choices": choices
             })
-            
-            with cols[i]:
-                st.metric(label=f"Match Confidence", value=f"{score:.1%}")
-                st.caption(f"**Tags:** {keywords}")
-                st.markdown(f"[🔗 View Video Source Link]({gdrive_url})")
+        
+        session["ad_script"] = ad_script
+        return render_template("select_clips.html", scenes=scenes_data)
+        
+    return render_template("index.html")
 
-        current_selection = st.radio(
-            label=f"Choose clip for Scene {line_number}:",
-            options=[0, 1, 2, 3, 4],
-            format_func=lambda x: choices_options[x]["label"],
-            key=f"scene_{line_number}_{hash(script_line)}_radio"
+@app.route("/render", methods=["POST"])
+def render_sequence():
+    ad_script = session.get("ad_script", [])
+    if not ad_script:
+        return redirect(url_for("index"))
+        
+    downloaded_clip_paths = []
+    
+    for line_number in range(1, len(ad_script) + 1):
+        clip_id = request.form.get(f"scene_{line_number}_clip_id")
+        
+        match_row = df_clips[df_clips['clip_id'] == clip_id]
+        if match_row.empty:
+            return f"Error: Clip metadata missing for selection in Scene {line_number}", 400
+            
+        gdrive_url = match_row.iloc[0]['gdrive_url']
+        local_filename = os.path.join(TEMP_DIR, f"{clip_id}.mp4")
+        
+        if not os.path.exists(local_filename):
+            try:
+                gdown.download(gdrive_url, local_filename, quiet=True)
+            except Exception as e:
+                return f"Failed to download clip '{clip_id}'. Check Google Drive sharing permissions. Details: {e}", 500
+                
+        downloaded_clip_paths.append(local_filename)
+        
+    try:
+        video_clips = [VideoFileClip(path) for path in downloaded_clip_paths]
+        final_video = concatenate_videoclips(video_clips, method="compose")
+        final_video.write_videofile(
+            FINAL_OUTPUT_PATH, 
+            fps=24, 
+            codec="libx264", 
+            audio_codec="aac"
         )
-        
-        st.session_state.selections[line_number] = choices_options[current_selection]
 
-    st.write("---")
-    if st.button("Render Final Sequence", type="primary", use_container_width=True):
-        downloaded_clip_paths = []
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        final_video.close()
         
-        active_selections = {k: v for k, v in st.session_state.selections.items() if k <= len(ad_script)}
+        for clip in video_clips:
+            clip.close()
+            
+    except Exception as e:
+        return f"MoviePy compilation failed: {e}", 500
         
-        for index, (line_num, asset_data) in enumerate(active_selections.items()):
-            status_text.text(f"Processing Scene {line_num}: Fetching clip '{asset_data['clip_id']}'...")
-            local_filename = os.path.join(TEMP_DIR, f"{asset_data['clip_id']}.mp4")
-            
-            if not os.path.exists(local_filename):
-                try:
-                    gdown.download(asset_data['gdrive_url'], local_filename, quiet=True)
-                except Exception as e:
-                    st.error(f"Failed download on '{asset_data['clip_id']}': Please check its share permissions.")
-                    st.stop()
-            
-            downloaded_clip_paths.append(local_filename)
-            progress_bar.progress(int((index + 1) / len(active_selections) * 50))
-            
-        status_text.text("Merging video files together...")
-        try:
-            video_clips = [VideoFileClip(path) for path in downloaded_clip_paths]
-            final_video = concatenate_videoclips(video_clips, method="compose")
-            final_video.write_videofile(
-                FINAL_OUTPUT_PATH, 
-                fps=24, 
-                codec="libx264", 
-                audio_codec="aac"
-            )
-            
-            for clip in video_clips:
-                clip.close()
-                
-            progress_bar.progress(100)
-            status_text.success("Ad compiled successfully!")
-            
-            with open(FINAL_OUTPUT_PATH, 'rb') as video_file:
-                st.video(video_file.read())
-                
-        except Exception as e:
-            st.error(f"MoviePy failed compilation: {e}")
-else:
-    st.warning("Please input a script into the text area above to begin.")
+    return render_template("result.html", video_url=FINAL_OUTPUT_PATH)
+
+def open_browser():
+    webbrowser.open_new("http://127.0.0.1:5001")
+
+if __name__ == "__main__":
+    Timer(1.5, open_browser).start()
+    
+    app.run(debug=False, port=5001, use_reloader=False)

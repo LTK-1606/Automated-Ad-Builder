@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>🎬 Automated Ad Builder</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light container my-5">
+    <h1 class="mb-4">🎬 Automated Ad Builder</h1>
+    <div class="card p-4 shadow-sm">
+        <form method="POST">
+            <div class="mb-3">
+                <label for="script" class="form-label font-weight-bold">Paste your script (Put each scene/line on a new row):</label>
+                <textarea class="form-control" id="script" name="script" rows="6" placeholder="Line 1: High energy shot...&#10;Line 2: Close up of product..."></textarea>
+            </div>
+            {% if error %}
+                <div class="alert alert-danger">{{ error }}</div>
+            {% endif %}
+            <button type="submit" class="btn btn-primary w-100">Start Analysis</button>
+        </form>
+    </div>
+</body>
+</html>
