@@ -1,5 +1,6 @@
 import os
 import sys
+import subprocess
 import pandas as pd
 import gdown
 from flask import Flask, render_template, request, redirect, url_for, session
@@ -14,23 +15,36 @@ def get_resource_path(relative_path):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
-app = Flask(__name__, 
-            template_folder=get_resource_path("templates"), 
-            static_folder=get_resource_path("static"))
+if hasattr(sys, '_MEIPASS'):
+    EXTERNAL_DIR = os.path.dirname(sys.executable)
+else:
+    EXTERNAL_DIR = os.path.abspath(".")
+
+app = Flask(__name__, template_folder=get_resource_path("templates"))
+
+TEMP_DIR = os.path.join(EXTERNAL_DIR, "temp_clips")
+OUTPUT_DIR = os.path.join(EXTERNAL_DIR, "Output")
+FINAL_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "final_ad_output.mp4")
+
+os.makedirs(TEMP_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 if hasattr(sys, '_MEIPASS'):
-    CLIP_PATH = os.path.join(os.path.dirname(sys.executable), "Video Clip Selector.xlsx")
+    CLIP_PATH = os.path.join(EXTERNAL_DIR, "Video Clip Selector.xlsx")
 else:
     CLIP_PATH = os.path.join(os.path.abspath("."), "Video Clip Selector.xlsx")
 
+def reveal_output(file_path):
+    path = os.path.normpath(file_path)
+    if os.name == 'nt':  # Windows
+        subprocess.Popen(f'explorer /select,"{path}"')
+    elif sys.platform == 'darwin':  # macOS
+        subprocess.Popen(['open', '-R', path])
+    else:  # Linux/Unix
+        subprocess.Popen(['xdg-open', os.path.dirname(path)])
+
 app = Flask(__name__)
 app.secret_key = "super_secret_session_key" 
-
-TEMP_DIR = "./temp_clips"
-FINAL_OUTPUT_PATH = "static/final_ad_output.mp4"
-
-os.makedirs(TEMP_DIR, exist_ok=True)
-os.makedirs("static", exist_ok=True)
 
 print("Loading data and model...")
 df = pd.read_excel(CLIP_PATH, sheet_name=1)
@@ -114,14 +128,15 @@ def render_sequence():
         )
 
         final_video.close()
-        
         for clip in video_clips:
             clip.close()
-            
+
+        reveal_output(FINAL_OUTPUT_PATH)
+ 
     except Exception as e:
         return f"MoviePy compilation failed: {e}", 500
         
-    return render_template("result.html", video_url=FINAL_OUTPUT_PATH)
+    return render_template("result.html")
 
 def open_browser():
     webbrowser.open_new("http://127.0.0.1:5001")
