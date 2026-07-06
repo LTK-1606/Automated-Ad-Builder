@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 import sys
 import subprocess
@@ -21,6 +22,7 @@ else:
     EXTERNAL_DIR = os.path.abspath(".")
 
 app = Flask(__name__, template_folder=get_resource_path("templates"))
+app.secret_key = "super_secret_session_key" 
 
 TEMP_DIR = os.path.join(EXTERNAL_DIR, "temp_clips")
 OUTPUT_DIR = os.path.join(EXTERNAL_DIR, "Output")
@@ -43,21 +45,28 @@ def reveal_output(file_path):
     else:  # Linux/Unix
         subprocess.Popen(['xdg-open', os.path.dirname(path)])
 
-app = Flask(__name__)
-app.secret_key = "super_secret_session_key" 
+df_clips = None
+model = None
+clip_embeddings = None
 
-print("Loading data and model...")
-df = pd.read_excel(CLIP_PATH, sheet_name=1)
-df.columns = df.columns.str.strip()
-df_clips = df[['Clip Name', 'Actions', 'Clip Link']].copy()
-df_clips.rename(columns={'Clip Name': 'clip_id', 'Actions': 'keywords', 'Clip Link': 'gdrive_url'}, inplace=True)
+def init_resources():
+    global df_clips, model, clip_embeddings
+    if model is not None:
+        return  
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
-clip_embeddings = model.encode(df_clips["keywords"].tolist(), show_progress_bar=False)
-print("Startup complete!")
+    print("Loading data and model...")
+    df = pd.read_excel(CLIP_PATH, sheet_name=1)
+    df.columns = df.columns.str.strip()
+    df_clips = df[['Clip Name', 'Actions', 'Clip Link']].copy()
+    df_clips.rename(columns={'Clip Name': 'clip_id', 'Actions': 'keywords', 'Clip Link': 'gdrive_url'}, inplace=True)
+
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    clip_embeddings = model.encode(df_clips["keywords"].tolist(), show_progress_bar=False)
+    print("Startup complete!")
 
 @app.route("/", methods=["GET", "POST"])
 def index():
+    init_resources() 
     if request.method == "POST":
         user_input = request.form.get("script", "")
         ad_script = [line.strip() for line in user_input.split("\n") if line.strip()]
@@ -93,6 +102,7 @@ def index():
 
 @app.route("/render", methods=["POST"])
 def render_sequence():
+    init_resources() 
     ad_script = session.get("ad_script", [])
     if not ad_script:
         return redirect(url_for("index"))
@@ -142,6 +152,12 @@ def open_browser():
     webbrowser.open_new("http://127.0.0.1:5001")
 
 if __name__ == "__main__":
-    Timer(1.5, open_browser).start()
+    multiprocessing.freeze_support()
+
+    init_resources()
+
+    if not os.environ.get("WERKZEUG_RUN_MAIN") and not os.environ.get("APP_BROWSER_OPENED"):
+        os.environ["APP_BROWSER_OPENED"] = "true"
+        Timer(1.5, open_browser).start()
     
     app.run(debug=False, port=5001, use_reloader=False)

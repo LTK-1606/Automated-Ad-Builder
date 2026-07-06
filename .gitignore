@@ -3,3 +3,5 @@ dist/
 build/
 *.log
 Video Clip Selector.xlsx
+temp_clips/
+Output/
