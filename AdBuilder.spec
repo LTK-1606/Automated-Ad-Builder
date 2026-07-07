@@ -39,11 +39,11 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
-    codesign_identity=None,
+    codesign_identity='-',
     entitlements_file=None,
 )
 coll = COLLECT(
@@ -54,4 +54,10 @@ coll = COLLECT(
     upx=True,
     upx_exclude=[],
     name='AdBuilder',
+)
+app = BUNDLE(
+    coll,
+    name='AdBuilder.app',
+    icon=None,
+    bundle_identifier=None,
 )

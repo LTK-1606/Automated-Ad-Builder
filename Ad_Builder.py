@@ -17,8 +17,17 @@ def get_resource_path(relative_path):
     return os.path.join(os.path.abspath("."), relative_path)
 
 if hasattr(sys, '_MEIPASS'):
-    EXTERNAL_DIR = os.path.dirname(sys.executable)
+    # PyInstaller compiled bundle
+    exe_dir = os.path.dirname(sys.executable)
+    
+    if sys.platform == 'darwin' and '.app/Contents/MacOS' in exe_dir:
+        # macOS Bundle (application)
+        EXTERNAL_DIR = os.path.abspath(os.path.join(exe_dir, '../../..'))
+    else:
+        # Windows (.exe folder)
+        EXTERNAL_DIR = exe_dir
 else:
+    # standard uncompiled python script
     EXTERNAL_DIR = os.path.abspath(".")
 
 app = Flask(__name__, template_folder=get_resource_path("templates"))
@@ -27,14 +36,10 @@ app.secret_key = "super_secret_session_key"
 TEMP_DIR = os.path.join(EXTERNAL_DIR, "temp_clips")
 OUTPUT_DIR = os.path.join(EXTERNAL_DIR, "Output")
 FINAL_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "final_ad_output.mp4")
+CLIP_PATH = os.path.join(EXTERNAL_DIR, "Video Clip Selector.xlsx")
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-if hasattr(sys, '_MEIPASS'):
-    CLIP_PATH = os.path.join(EXTERNAL_DIR, "Video Clip Selector.xlsx")
-else:
-    CLIP_PATH = os.path.join(os.path.abspath("."), "Video Clip Selector.xlsx")
 
 def reveal_output(file_path):
     path = os.path.normpath(file_path)
@@ -130,11 +135,15 @@ def render_sequence():
     try:
         video_clips = [VideoFileClip(path) for path in downloaded_clip_paths]
         final_video = concatenate_videoclips(video_clips, method="compose")
+        temp_audio_path = os.path.join(OUTPUT_DIR, "temp_audio_build.m4a")
+
         final_video.write_videofile(
             FINAL_OUTPUT_PATH, 
             fps=24, 
             codec="libx264", 
-            audio_codec="aac"
+            audio_codec="aac",
+            temp_audiofile=temp_audio_path,
+            remove_temp=True
         )
 
         final_video.close()
@@ -151,13 +160,39 @@ def render_sequence():
 def open_browser():
     webbrowser.open_new("http://127.0.0.1:5001")
 
+def kill_process_on_port(port):
+    import platform
+    try:
+        if platform.system() == "Windows":
+            cmd = f'netstat -ano | findstr :{port}'
+            output = subprocess.check_output(cmd, shell=True).decode().strip()
+            if output:
+                for line in output.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 5 and f":{port}" in parts[1]:
+                        pid = parts[-1]
+                        print(f"Port {port} is busy. Killing Windows PID {pid}...")
+                        subprocess.run(f'taskkill /F /PID {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            cmd = f'lsof -t -i:{port}'
+            pids = subprocess.check_output(cmd, shell=True).decode().strip().split()
+            for pid in pids:
+                if pid:
+                    print(f"Port {port} is busy. Killing macOS PID {pid}...")
+                    subprocess.run(f'kill -9 {pid}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        pass
+    except Exception as e:
+        print(f"Error trying to clear port {port}: {e}")
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-
+    PORT = 5001
+    kill_process_on_port(PORT)
     init_resources()
 
     if not os.environ.get("WERKZEUG_RUN_MAIN") and not os.environ.get("APP_BROWSER_OPENED"):
         os.environ["APP_BROWSER_OPENED"] = "true"
         Timer(1.5, open_browser).start()
     
-    app.run(debug=False, port=5001, use_reloader=False)
+    app.run(debug=False, port=PORT, use_reloader=False)
