@@ -19,5 +19,32 @@
             <button type="submit" class="btn btn-primary w-100">Start Analysis</button>
         </form>
     </div>
+    <button id="kill-app-btn" class="btn btn-danger shadow" style="position: fixed; bottom: 20px; right: 20px; z-index: 10000; border-radius: 8px; font-weight: bold;">
+    ⏹ Quit App
+    </button>
 </body>
 </html>
+
+<script>
+document.getElementById('kill-app-btn').addEventListener('click', function() {
+    if (confirm("Are you sure you want to quit the application?")) {
+        fetch('/shutdown', { method: 'POST' })
+        .then(() => {
+            showClosedScreen();
+        })
+        .catch(() => {
+            showClosedScreen();
+        });
+    }
+});
+
+function showClosedScreen() {
+    document.body.innerHTML = `
+        <div style='display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; background-color:#1a1a1a; color:white; font-family:sans-serif;'>
+            <h2 style='margin-bottom: 10px;'>Application Closed</h2>
+            <p style='color: #888;'>The background server has been terminated and the port is free.</p>
+            <p style='color: #888;'>You can now safely close this browser tab.</p>
+        </div>
+    `;
+}
+</script>

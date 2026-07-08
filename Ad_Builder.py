@@ -157,6 +157,18 @@ def render_sequence():
         
     return render_template("result.html")
 
+@app.route("/shutdown", methods=["POST"])
+def shutdown():
+    def kill_server():
+        import time
+        time.sleep(0.5)  
+        os._exit(0)      
+        
+    import threading
+    threading.Thread(target=kill_server).start()
+    
+    return "Shutting down...", 200
+
 def open_browser():
     webbrowser.open_new("http://127.0.0.1:5001")
 
