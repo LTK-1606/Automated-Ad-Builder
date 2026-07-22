@@ -1,8 +1,9 @@
-import multiprocessing
 import os
 import sys
+import multiprocessing
 import subprocess
 import pandas as pd
+import numpy as np
 import gdown
 from flask import Flask, render_template, request, redirect, url_for, session
 from sentence_transformers import SentenceTransformer
@@ -60,10 +61,12 @@ def init_resources():
         return  
 
     print("Loading data and model...")
-    df = pd.read_excel(CLIP_PATH, sheet_name=1)
+    df = pd.read_excel(CLIP_PATH, sheet_name="VideoTimeStamps")
     df.columns = df.columns.str.strip()
     df_clips = df[['Clip Name', 'Actions', 'Clip Link']].copy()
     df_clips.rename(columns={'Clip Name': 'clip_id', 'Actions': 'keywords', 'Clip Link': 'gdrive_url'}, inplace=True)
+    df_clips['Country'] = df['Country'] if 'Country' in df.columns else "Any"
+    df_clips['Subject'] = df['Subject'] if 'Subject' in df.columns else "Any"
 
     model = SentenceTransformer("all-MiniLM-L6-v2")
     clip_embeddings = model.encode(df_clips["keywords"].tolist(), show_progress_bar=False)
@@ -72,25 +75,48 @@ def init_resources():
 @app.route("/", methods=["GET", "POST"])
 def index():
     init_resources() 
+    countries = sorted(df_clips['Country'].dropna().astype(str).unique().tolist())
+    subjects = sorted(df_clips['Subject'].dropna().astype(str).unique().tolist())
+    
     if request.method == "POST":
         user_input = request.form.get("script", "")
         ad_script = [line.strip() for line in user_input.split("\n") if line.strip()]
         
+        selected_country = request.form.get("country", "Any")
+        selected_subject = request.form.get("subject", "Any")
+        
         if not ad_script:
-            return render_template("index.html", error="Please enter a script.")
+            return render_template("index.html", error="Please enter a script.", countries=countries, subjects=subjects)
+        
+        mask = pd.Series(True, index=df_clips.index)
+        
+        if selected_country and selected_country != "Any":
+            mask &= (df_clips['Country'].astype(str).str.strip().str.lower() == selected_country.strip().lower())
+        if selected_subject and selected_subject != "Any":
+            mask &= (df_clips['Subject'].astype(str).str.strip().str.lower() == selected_subject.strip().lower())
+            
+        filtered_df = df_clips[mask]
+        
+        if filtered_df.empty:
+            return render_template("index.html", error="Error: No clips match this exact Country and Subject combination.", countries=countries, subjects=subjects)
+            
+        subset_embeddings = clip_embeddings[mask.to_numpy()]
         
         scenes_data = []
         for line_number, script_line in enumerate(ad_script, start=1):
             script_embedding = model.encode([script_line])
-            similarities = cosine_similarity(script_embedding, clip_embeddings)[0]
-            top_5_indices = similarities.argsort()[-5:][::-1]
+            
+            similarities = cosine_similarity(script_embedding, subset_embeddings)[0]
+            
+            top_k = min(5, len(filtered_df))
+            top_subset_indices = similarities.argsort()[-top_k:][::-1]
             
             choices = []
-            for i, idx in enumerate(top_5_indices):
+            for idx in top_subset_indices:
                 choices.append({
-                    "clip_id": str(df_clips.iloc[idx]["clip_id"]),
-                    "keywords": str(df_clips.iloc[idx]["keywords"]),
-                    "gdrive_url": str(df_clips.iloc[idx]["gdrive_url"]),
+                    "clip_id": str(filtered_df.iloc[idx]["clip_id"]),
+                    "keywords": str(filtered_df.iloc[idx]["keywords"]),
+                    "gdrive_url": str(filtered_df.iloc[idx]["gdrive_url"]),
                     "score": f"{similarities[idx]:.1%}"
                 })
                 
@@ -103,7 +129,7 @@ def index():
         session["ad_script"] = ad_script
         return render_template("select_clips.html", scenes=scenes_data)
         
-    return render_template("index.html")
+    return render_template("index.html", error=None, countries=countries, subjects=subjects)
 
 @app.route("/render", methods=["POST"])
 def render_sequence():
@@ -128,7 +154,7 @@ def render_sequence():
             try:
                 gdown.download(gdrive_url, local_filename, quiet=True)
             except Exception as e:
-                return f"Failed to download clip '{clip_id}'. Check Google Drive sharing permissions. Details: {e}", 500
+                return f"Failed to download clip '{clip_id}'. Check Google Drive permissions. Details: {e}", 500
                 
         downloaded_clip_paths.append(local_filename)
         
@@ -151,7 +177,7 @@ def render_sequence():
             clip.close()
 
         reveal_output(FINAL_OUTPUT_PATH)
- 
+
     except Exception as e:
         return f"MoviePy compilation failed: {e}", 500
         

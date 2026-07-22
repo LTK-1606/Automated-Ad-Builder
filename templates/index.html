@@ -9,6 +9,28 @@
     <h1 class="mb-4">🎬 Automated Ad Builder</h1>
     <div class="card p-4 shadow-sm">
         <form method="POST">
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <label for="country" class="form-label fw-bold">Filter by Country:</label>
+                    <select class="form-select" name="country" id="country">
+                        <option value="Any" selected>Any Country</option>
+                        {% for country in countries %}
+                            <option value="{{ country }}">{{ country }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-6">
+                    <label for="subject" class="form-label fw-bold">Filter by Subject:</label>
+                    <select class="form-select" name="subject" id="subject">
+                        <option value="Any" selected>Any Subject</option>
+                        <!-- Jinja loop populated by the backend -->
+                        {% for subject in subjects %}
+                            <option value="{{ subject }}">{{ subject }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
             <div class="mb-3">
                 <label for="script" class="form-label font-weight-bold">Paste your script (Put each scene/line on a new row):</label>
                 <textarea class="form-control" id="script" name="script" rows="6" placeholder="Line 1: High energy shot...&#10;Line 2: Close up of product..."></textarea>
