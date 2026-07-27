@@ -1,7 +1,9 @@
 streamlit
 gdown
 pandas
+numpy
 sentence-transformers
 openpyxl
 scikit-learn
 moviepy
+proglog
