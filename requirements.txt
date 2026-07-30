@@ -7,3 +7,4 @@ openpyxl
 scikit-learn
 moviepy
 proglog
+torchvision
