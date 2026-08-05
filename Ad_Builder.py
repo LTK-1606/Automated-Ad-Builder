@@ -51,10 +51,16 @@ if uploaded_file is not None:
         df = pd.read_excel(uploaded_file, sheet_name="VideoTimeStamps")
         df.columns = df.columns.str.strip()
         
-        df_clips = df[['Clip Name', 'Actions', 'Clip Link']].copy()
+        df_clips = df[['Clip Name', 
+                    #    'Actions', 
+                       'Clip Link']].copy()
+
+        df_clips['Clip Name No Extension'] = df_clips['Clip Name'].str.split(".").str[0]
+        df_clips['keywords'] = df_clips['Clip Name No Extension'].str.split("_")
+        print(df_clips.head())
         df_clips.rename(columns={
             'Clip Name': 'clip_id', 
-            'Actions': 'keywords', 
+            # 'Actions': 'keywords', 
             'Clip Link': 'gdrive_url'
         }, inplace=True)
         
