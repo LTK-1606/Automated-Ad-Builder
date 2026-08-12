@@ -57,12 +57,13 @@ if uploaded_file is not None:
 
         df_clips['Clip Name No Extension'] = df_clips['Clip Name'].str.split(".").str[0]
         df_clips['keywords'] = df_clips['Clip Name No Extension'].str.split("_")
-        print(df_clips.head())
         df_clips.rename(columns={
             'Clip Name': 'clip_id', 
             # 'Actions': 'keywords', 
             'Clip Link': 'gdrive_url'
         }, inplace=True)
+
+        df_clips['unique_id'] = df_clips.index.astype(str)
         
         df_clips['Country'] = df['Country'] if 'Country' in df.columns else "Any"
         df_clips['Subject'] = df['Subject'] if 'Subject' in df.columns else "Any"
@@ -121,6 +122,7 @@ if uploaded_file is not None:
                     choices = []
                     for idx in top_subset_indices:
                         choices.append({
+                            "unique_id": str(filtered_df.iloc[idx]["unique_id"]),
                             "clip_id": str(filtered_df.iloc[idx]["clip_id"]),
                             "keywords": str(filtered_df.iloc[idx]["keywords"]),
                             "gdrive_url": str(filtered_df.iloc[idx]["gdrive_url"]),
@@ -138,7 +140,7 @@ if uploaded_file is not None:
                 
                 for i, scene in enumerate(scenes_data):
                     st.session_state[f"page_{i}"] = 0
-                    st.session_state[f"scene_{scene['line_number']}_selected"] = scene["choices"][0]["clip_id"]
+                    st.session_state[f"scene_{scene['line_number']}_selected"] = scene["choices"][0]["unique_id"]
 
     if "scenes_data" in st.session_state:
         st.write("---")
@@ -161,13 +163,13 @@ if uploaded_file is not None:
                     c = current_batch[col_idx]
                     with col:
                         scene_key = f"scene_{scene['line_number']}_selected"
-                        is_selected = st.session_state.get(scene_key) == c['clip_id']
+                        is_selected = st.session_state.get(scene_key) == c['unique_id']
                         
                         btn_label = "✅ Selected" if is_selected else "Select"
                         btn_type = "primary" if is_selected else "secondary"
                         
                         if st.button(btn_label, key=f"sel_{i}_{start_idx+col_idx}", type=btn_type, use_container_width=True):
-                            st.session_state[scene_key] = c['clip_id']
+                            st.session_state[scene_key] = c['unique_id']
                             st.rerun()
 
                         st.markdown(f"**Score: {c['score']}**")
@@ -202,22 +204,23 @@ if uploaded_file is not None:
             for line_number in range(1, total_scenes + 1):
                 status_text.text(f"Downloading clip {line_number} of {total_scenes}...")
                 
-                clip_id = st.session_state[f"scene_{line_number}_selected"]
-                match_row = df_clips[df_clips['clip_id'] == clip_id]
+                selected_unique_id = st.session_state[f"scene_{line_number}_selected"]
+                match_row = df_clips[df_clips['unique_id'] == selected_unique_id]
                 
                 if match_row.empty:
                     st.error(f"Error: Clip metadata missing for selection in Scene {line_number}")
                     error_occurred = True
                     break
-                    
+
+                clip_name = match_row.iloc[0]['clip_id']
                 gdrive_url = match_row.iloc[0]['gdrive_url']
-                local_filename = os.path.join(temp_dir, f"{clip_id}.mp4")
+                local_filename = os.path.join(temp_dir, f"scene{line_number}_{clip_name}.mp4")
                 
                 if not os.path.exists(local_filename):
                     try:
                         gdown.download(gdrive_url, local_filename, quiet=True)
                     except Exception as e:
-                        st.error(f"Failed to download clip '{clip_id}'. Details: {e}")
+                        st.error(f"Failed to download clip '{clip_name}'. Details: {e}")
                         error_occurred = True
                         break
                         
