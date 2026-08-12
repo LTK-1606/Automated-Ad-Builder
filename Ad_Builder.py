@@ -1,6 +1,16 @@
 import os
+
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
 import math
 import tempfile
+import gc
+import torch
+
+torch.set_num_threads(1)
+torch.set_grad_enabled(False)
+
 import pandas as pd
 import numpy as np
 import gdown
@@ -19,7 +29,7 @@ def load_model():
 @st.cache_data
 def compute_embeddings(keywords_list):
     model = load_model()
-    return model.encode(keywords_list, show_progress_bar=False)
+    return model.encode(keywords_list, show_progress_bar=False, batch_size=32)
 
 class StreamlitProgressLogger(ProgressBarLogger):
     def __init__(self, progress_bar, status_text, start_pct, end_pct):
@@ -35,7 +45,6 @@ class StreamlitProgressLogger(ProgressBarLogger):
             if total > 0:
                 fraction = value / total
                 current_pct = int(self.start_pct + fraction * (self.end_pct - self.start_pct))
-                
                 current_pct = min(current_pct, 100)
                 
                 self.progress_bar.progress(current_pct)
@@ -51,15 +60,12 @@ if uploaded_file is not None:
         df = pd.read_excel(uploaded_file, sheet_name="VideoTimeStamps")
         df.columns = df.columns.str.strip()
         
-        df_clips = df[['Clip Name', 
-                    #    'Actions', 
-                       'Clip Link']].copy()
+        df_clips = df[['Clip Name', 'Clip Link']].copy()
 
         df_clips['Clip Name No Extension'] = df_clips['Clip Name'].str.split(".").str[0]
         df_clips['keywords'] = df_clips['Clip Name No Extension'].str.split("_")
         df_clips.rename(columns={
             'Clip Name': 'clip_id', 
-            # 'Actions': 'keywords', 
             'Clip Link': 'gdrive_url'
         }, inplace=True)
 
@@ -198,43 +204,60 @@ if uploaded_file is not None:
             
             temp_dir = tempfile.mkdtemp()
             downloaded_clip_paths = []
+            video_clips = []
+            final_video = None
             error_occurred = False
             total_scenes = len(st.session_state["ad_script"])
             
-            for line_number in range(1, total_scenes + 1):
-                status_text.text(f"Downloading clip {line_number} of {total_scenes}...")
-                
-                selected_unique_id = st.session_state[f"scene_{line_number}_selected"]
-                match_row = df_clips[df_clips['unique_id'] == selected_unique_id]
-                
-                if match_row.empty:
-                    st.error(f"Error: Clip metadata missing for selection in Scene {line_number}")
-                    error_occurred = True
-                    break
-
-                clip_name = match_row.iloc[0]['clip_id']
-                gdrive_url = match_row.iloc[0]['gdrive_url']
-                local_filename = os.path.join(temp_dir, f"scene{line_number}_{clip_name}.mp4")
-                
-                if not os.path.exists(local_filename):
-                    try:
-                        gdown.download(gdrive_url, local_filename, quiet=True)
-                    except Exception as e:
-                        st.error(f"Failed to download clip '{clip_name}'. Details: {e}")
+            try:
+                for line_number in range(1, total_scenes + 1):
+                    status_text.text(f"Downloading clip {line_number} of {total_scenes}...")
+                    
+                    selected_unique_id = st.session_state[f"scene_{line_number}_selected"]
+                    match_row = df_clips[df_clips['unique_id'] == selected_unique_id]
+                    
+                    if match_row.empty:
+                        st.error(f"Error: Clip metadata missing for selection in Scene {line_number}")
                         error_occurred = True
                         break
-                        
-                downloaded_clip_paths.append(local_filename)
+
+                    clip_name = match_row.iloc[0]['clip_id']
+                    gdrive_url = match_row.iloc[0]['gdrive_url']
+                    local_filename = os.path.join(temp_dir, f"scene{line_number}_{clip_name}.mp4")
+                    
+                    if not os.path.exists(local_filename):
+                        try:
+                            gdown.download(gdrive_url, local_filename, quiet=True)
+                        except Exception as e:
+                            st.error(f"Failed to download clip '{clip_name}'. Details: {e}")
+                            error_occurred = True
+                            break
+                            
+                    downloaded_clip_paths.append(local_filename)
+                    
+                    current_dl_progress = int((line_number / total_scenes) * 50)
+                    progress_bar.progress(current_dl_progress)
                 
-                current_dl_progress = int((line_number / total_scenes) * 50)
-                progress_bar.progress(current_dl_progress)
-            
-            if not error_occurred:
-                try:
+                if not error_occurred:
                     status_text.text("Concatenating video clips...")
                     progress_bar.progress(55)
                     
-                    video_clips = [VideoFileClip(path) for path in downloaded_clip_paths]
+                    for path in downloaded_clip_paths:
+                        clip = VideoFileClip(path)
+                        target_h = 720 if clip.h > 720 else clip.h
+                        
+                        target_w = int(round(clip.w * (target_h / clip.h)))
+                        
+                        if target_w % 2 != 0:
+                            target_w -= 1
+                        if target_h % 2 != 0:
+                            target_h -= 1
+                        
+                        if target_w != clip.w or target_h != clip.h:
+                            clip = clip.resized((target_w, target_h)) 
+                            
+                        video_clips.append(clip)
+                        
                     final_video = concatenate_videoclips(video_clips, method="compose")
                     
                     final_output_path = os.path.join(temp_dir, "final_ad_output.mp4")
@@ -252,32 +275,45 @@ if uploaded_file is not None:
                         fps=24, 
                         codec="libx264", 
                         audio_codec="aac",
+                        preset="ultrafast",
+                        threads=1,
+                        ffmpeg_params=["-pix_fmt", "yuv420p"],
                         temp_audiofile=temp_audio_path,
                         remove_temp=True,
                         logger=my_logger
                     )
 
-                    final_video.close()
-                    for clip in video_clips:
-                        clip.close()
-                        
                     progress_bar.progress(100)
-                    st.success("🎉🎉 Video generated successfully! 🎉🎉!")
+                    st.success("🎉🎉 Video generated successfully! 🎉🎉")
+                    
+                    st.video(final_output_path)
                     
                     with open(final_output_path, "rb") as video_file:
-                        video_bytes = video_file.read()
-                        
-                    st.video(video_bytes)
-                    st.download_button(
-                        label="**DOWNLOAD FINAL AD**",
-                        data=video_bytes,
-                        file_name="final_ad.mp4",
-                        mime="video/mp4",
-                        type="primary",
-                        use_container_width=True
-                    )
-                    
-                except Exception as e:
-                    progress_bar.empty()
-                    status_text.empty()
-                    st.error(f"MoviePy compilation failed: {e}")
+                        st.download_button(
+                            label="**DOWNLOAD FINAL AD**",
+                            data=video_file,
+                            file_name="final_ad.mp4",
+                            mime="video/mp4",
+                            type="primary",
+                            use_container_width=True
+                        )
+
+            except Exception as e:
+                progress_bar.empty()
+                status_text.empty()
+                st.error(f"MoviePy compilation failed: {e}")
+
+            finally:
+                if final_video is not None:
+                    try:
+                        final_video.close()
+                    except Exception:
+                        pass
+                
+                for clip in video_clips:
+                    try:
+                        clip.close()
+                    except Exception:
+                        pass
+                
+                gc.collect()
