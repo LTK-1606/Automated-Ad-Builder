@@ -8,3 +8,4 @@ scikit-learn
 moviepy
 proglog
 torchvision
+imageio-ffmpeg

@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -18,6 +19,7 @@ import streamlit as st
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from moviepy import VideoFileClip, concatenate_videoclips
+import imageio_ffmpeg as gp
 from proglog import ProgressBarLogger
 
 st.set_page_config(page_title="AI Video Ad Generator", page_icon="🎬", layout="wide")
@@ -223,17 +225,46 @@ if uploaded_file is not None:
 
                     clip_name = match_row.iloc[0]['clip_id']
                     gdrive_url = match_row.iloc[0]['gdrive_url']
-                    local_filename = os.path.join(temp_dir, f"scene{line_number}_{clip_name}.mp4")
-                    
-                    if not os.path.exists(local_filename):
-                        try:
-                            gdown.download(gdrive_url, local_filename, quiet=True)
-                        except Exception as e:
-                            st.error(f"Failed to download clip '{clip_name}'. Details: {e}")
-                            error_occurred = True
-                            break
-                            
-                    downloaded_clip_paths.append(local_filename)
+
+                    base, ext = os.path.splitext(clip_name)
+                    safe_clip_name = f"{base}{ext.lower()}"
+
+                    download_path = os.path.join(temp_dir, f"scene{line_number}_{safe_clip_name}")
+                    final_mp4_path = os.path.join(temp_dir, f"scene{line_number}_{base}.mp4")
+
+                    if not os.path.exists(final_mp4_path):
+                        if not os.path.exists(download_path):
+                            try:
+                                gdown.download(gdrive_url, download_path, quiet=True)
+                            except Exception as e:
+                                st.error(f"Failed to download clip '{clip_name}'. Details: {e}")
+                                error_occurred = True
+                                break
+
+                        if download_path.endswith('.mov'):
+                            try:
+                                ffmpeg_binary = gp.get_ffmpeg_exe()
+
+                                cmd = [
+                                    ffmpeg_binary, '-y', '-i', download_path,
+                                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+                                    '-c:a', 'aac', '-map_metadata', '-1',
+                                    final_mp4_path
+                                ]
+                                
+                                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                                
+                                if os.path.exists(download_path):
+                                    os.remove(download_path)
+                                    
+                            except Exception as e:
+                                st.error(f"System FFmpeg failed to process '{clip_name}'. Details: {e}")
+                                error_occurred = True
+                                break
+                        else:
+                            os.rename(download_path, final_mp4_path)
+
+                    downloaded_clip_paths.append(final_mp4_path)
                     
                     current_dl_progress = int((line_number / total_scenes) * 50)
                     progress_bar.progress(current_dl_progress)
