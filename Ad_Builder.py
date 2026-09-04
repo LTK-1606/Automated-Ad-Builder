@@ -275,7 +275,7 @@ if uploaded_file is not None:
                     
                     for path in downloaded_clip_paths:
                         clip = VideoFileClip(path)
-                        target_h = 720 if clip.h > 720 else clip.h
+                        target_h = 1080 if clip.h > 1080 else clip.h
                         
                         target_w = int(round(clip.w * (target_h / clip.h)))
                         
@@ -306,7 +306,8 @@ if uploaded_file is not None:
                         fps=24, 
                         codec="libx264", 
                         audio_codec="aac",
-                        preset="ultrafast",
+                        preset="fast",
+                        bitrate="4000k",
                         threads=1,
                         ffmpeg_params=["-pix_fmt", "yuv420p"],
                         temp_audiofile=temp_audio_path,
